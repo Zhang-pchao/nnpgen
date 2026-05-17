@@ -1,0 +1,22 @@
+schema_version = "nnpgen.config.v1"
+
+[paths]
+project_root = "/path/to/project"
+run_root = "/path/to/project/runs"
+plan_root = "/path/to/project/plans"
+poscar_pool_root = "/path/to/project/poscar_pool"
+
+[md]
+model_path = "/path/to/models/mace.model"
+conda_env = "/path/to/conda/envs/mace_ase"
+
+[remote]
+default_host = "slurm-cluster-a"
+
+# Optional environment variables for dual-SLURM DFT controllers:
+# NNPGEN_SLURM_HOST=slurm-cluster-a
+# NNPGEN_SLURM_ALT_HOST=slurm-cluster-b
+# NNPGEN_SLURM_ROOT=/path/to/remote/slurm-a/vasp
+# NNPGEN_SLURM_ALT_ROOT=/path/to/remote/slurm-b/vasp
+# NNPGEN_SLURM_PARTITIONS=standard,debug
+# NNPGEN_SLURM_PARTITION_CORES=standard=32,debug=16
