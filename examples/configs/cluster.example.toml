@@ -20,4 +20,4 @@ potcar_org_dir = "/path/to/remote/vasp/template/potcar/org"
 potcar_cat_dir = "/path/to/remote/vasp/template/potcar/cat"
 
 [remote]
-default_host = "pbs-cluster"
+default_host = "cluster-login"

@@ -20,7 +20,15 @@ def test_top_level_help():
 
 
 def test_domain_help_is_lightweight():
-    for domain in ["md", "dft", "dataset", "train", "monitor"]:
+    for domain in ["md", "dft", "dataset", "geo", "train", "monitor"]:
         result = run_cli(domain, "--help")
         assert f"nnpgen {domain}" in result.stdout
         assert "commands:" in result.stdout
+
+
+def test_new_generic_commands_are_listed():
+    result = run_cli("dft", "--help")
+    assert "archive" in result.stdout
+    assert "recover" in result.stdout
+    result = run_cli("monitor", "--help")
+    assert "summary" in result.stdout

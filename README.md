@@ -1,61 +1,111 @@
 # nnpgen
 
-`nnpgen` is a Python workflow toolkit for neural network potential generation. It connects structure preparation, ASE/MACE molecular dynamics sampling, VASP DFT task generation and monitoring, DP-data conversion, and DeepMD/DPA-style fine-tuning utilities.
+`nnpgen` is a portable Python toolkit for neural-network-potential workflows.
+It organizes structure preparation, ASE/MACE sampling, VASP task generation,
+dataset conversion, training helpers, and monitoring into reusable command
+groups.
 
-The repository is intentionally source-only: no model checkpoints, VASP outputs, generated DP arrays, private run manifests, or site-specific paths are committed.
+The repository is source-only: checkpoints, generated datasets, private
+manifests, credentials, server aliases, IP addresses, and site-specific
+absolute paths are not part of the project.
 
-## Install
+## Installation
+
+Use Python 3.9 or newer in a virtual environment or conda environment:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-Feature extras are optional:
+Install only the optional capabilities you need:
 
 ```bash
-python -m pip install -e ".[md,dataset,plot,dev]"
+python -m pip install -e ".[dev]"       # tests and local development
+python -m pip install -e ".[md,geo]"     # ASE/MACE and geometry builders
+python -m pip install -e ".[dataset]"    # NumPy-backed dataset utilities
+python -m pip install -e ".[plot]"       # benchmark plots
 ```
 
-Use a Python 3.9+ environment. Cluster system Python installations can be older; activate a suitable conda or virtual environment before installing.
+The `deepmd` extra installs DeepMD-kit, which is intentionally not a base
+dependency because it is environment- and accelerator-specific.
 
-## CLI
+## Command groups
 
 ```bash
 nnpgen --help
 nnpgen md --help
 nnpgen dft --help
 nnpgen dataset --help
+nnpgen geo --help
 nnpgen train --help
 nnpgen monitor --help
 ```
 
-Main command groups:
+- `md`: prepare, submit, monitor, and post-process MD frames.
+- `dft`: plan, prepare, submit, monitor, archive, recover, and convert DFT data.
+- `dataset`: validate and convert DP, EXTXYZ, and VASP-derived datasets.
+- `geo`: build reusable structure/solvent geometries, including the SiO₂
+  nanobubble builder.
+- `train`: prepare fine-tuning inputs and benchmark predictions.
+- `monitor`: summarize workflow state or run the optional watchdog.
 
-- `nnpgen md`: prepare, submit, monitor, and post-process ASE/MACE MD jobs.
-- `nnpgen dft`: plan, prepare, submit, monitor, collect, and convert VASP DFT jobs.
-- `nnpgen dataset`: validate and convert DP, EXTXYZ, and VASP-derived datasets.
-- `nnpgen train`: prepare fine-tuning inputs and run DeepMD/DPA benchmark helpers.
-- `nnpgen monitor`: run controller watchdog utilities.
+## Portable configuration
 
-## Configuration
-
-Public defaults are portable. Real project roots, remote roots, conda environments, model paths, and scheduler hosts should be supplied through:
-
-1. explicit CLI arguments,
-2. environment variables,
-3. a TOML file passed with `--config`,
-4. built-in defaults.
-
-Example:
+Public defaults use the current working directory. Supply real paths, model
+locations, scheduler hosts, and environments through explicit arguments,
+environment variables, or a copied TOML file:
 
 ```bash
-nnpgen --config examples/configs/server11_server15.example.toml config show
-nnpgen --config examples/configs/server11_server15.example.toml md prepare --help
+cp examples/configs/cluster.example.toml my-workflow.toml
+# Edit my-workflow.toml with paths for your own environment.
+nnpgen --config my-workflow.toml config show
 ```
 
-Copy an example config and replace placeholder paths with your own cluster paths before running jobs.
+Never commit a config containing credentials or organization-specific host
+details. Keep those values in a private, ignored file or in environment
+variables.
 
-## Development Checks
+## Generic DFT operations
+
+Remote targets are named at invocation time, so the same manifest can move
+between clusters without code edits:
+
+```bash
+nnpgen dft archive \
+  --manifest plans/dft_manifest.json \
+  --remote primary=login.example:/work/project/dft \
+  --output-root datasets/archive \
+  --dry-run
+
+nnpgen dft recover \
+  --manifest plans/dft_manifest.json \
+  --remote primary=login.example:/work/project/dft \
+  --backend primary=slurm
+# Add --apply only after reviewing the recovery report.
+```
+
+`archive` requires finished markers and `OUTCAR` by default, records pending
+and failed frames, and stages successful frames without deleting source data.
+Add `--convert` to invoke the package's VASP-to-DP-data converter after a
+successful staging pass.
+`recover` preserves active jobs and explicit failures; it only changes a
+manifest when `--apply` is supplied. Use `--allow-lost-target NAME` only after
+confirming that a target's scheduler is genuinely unavailable.
+
+For campaign-level status:
+
+```bash
+nnpgen monitor summary \
+  --manifest plans/dft_manifest.json \
+  --run-root runs/stage1 \
+  --xyz datasets/samples.xyz \
+  --output reports/status.json
+```
+
+## Development and hygiene checks
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -63,9 +113,21 @@ pytest
 python -m compileall src
 ```
 
-Before publishing, also check that private paths and generated files are absent:
+Before publishing, verify that generated artifacts and private values are
+absent from the Git-tracked files:
 
 ```bash
-find . -path './.git' -prune -o -name '__pycache__' -o -name '*.pyc' -o -name '*.bak*' -print
-grep -RIn 'replace-with-your-own-cluster-path' .
+git ls-files | rg '(__pycache__|\.pyc$|\.bak|OUTCAR$|CONTCAR$|\.npy$|\.npz$)'
+rg -n -i '(/home/|/data/|@[^ ]+:[^ ]+|token|password|secret)' $(git ls-files)
 ```
+
+The second check is a review aid; inspect matches rather than blindly deleting
+generic documentation examples.
+
+## Extension rules
+
+New functionality should live under a domain package (`geo`, `md`, `dft`,
+`dataset`, `train`, or `monitor`) with a small CLI adapter, explicit paths and
+parameters, deterministic summaries, and tests for pure logic. Keep cluster
+integration behind arguments/configuration, use descriptive generic names,
+and do not copy timestamped backups or one-off campaign scripts into `src/`.

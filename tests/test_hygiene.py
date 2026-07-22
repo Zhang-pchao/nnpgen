@@ -44,6 +44,10 @@ def test_no_private_paths_or_tokens_in_sources():
         "/" + "home/" + "xu" + "xf",
         "/" + "home/" + "thu-xu" + "xuefei",
         "github_" + "to" + "ken",
+        "ssh " + "11",
+        "ssh " + "15",
+        "ssh " + "27",
+        "101" + ".6.61.27",
     ]
     offenders = []
     for path in candidate_files():

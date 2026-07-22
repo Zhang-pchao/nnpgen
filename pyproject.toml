@@ -32,8 +32,9 @@ dependencies = [
 md = ["ase", "mace-torch"]
 deepmd = ["deepmd-kit"]
 dataset = ["numpy"]
+geo = ["ase", "numpy"]
 plot = ["matplotlib", "numpy"]
-dev = ["pytest", "numpy"]
+dev = ["pytest", "numpy", "ase"]
 
 [project.scripts]
 nnpgen = "nnpgen.cli:main"

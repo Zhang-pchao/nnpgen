@@ -139,6 +139,16 @@ COMMANDS: Dict[str, Dict[str, CommandSpec]] = {
             add_args="nnpgen.dft.controller:add_stage2_step20_status_arguments",
             runner="nnpgen.dft.controller:run_stage2_step20_status",
         ),
+        "archive": CommandSpec(
+            "Scan and stage terminal remote DFT frames.",
+            add_args="nnpgen.dft.archive:add_archive_arguments",
+            runner="nnpgen.dft.archive:run_archive",
+        ),
+        "recover": CommandSpec(
+            "Plan or apply safe recovery after a scheduler outage.",
+            add_args="nnpgen.dft.recovery:add_recovery_arguments",
+            runner="nnpgen.dft.recovery:run_recovery",
+        ),
     },
     "dataset": {
         "dpdata-to-extxyz": CommandSpec("Convert DP data to Extended XYZ.", module="nnpgen.dataset.dpdata_to_extxyz"),
@@ -146,6 +156,12 @@ COMMANDS: Dict[str, Dict[str, CommandSpec]] = {
         "split-train-test": CommandSpec("Split DP datasets into train/test roots.", module="nnpgen.dataset.split_train_test"),
         "check-run-systems": CommandSpec("Validate DeepMD run.json system paths.", module="nnpgen.dataset.check_run_systems"),
         "build-exclude-list": CommandSpec("Build explicit Stage-2 exclusion keys.", module="nnpgen.dataset.build_exclude_list"),
+    },
+    "geo": {
+        "build-sio2-nanobubble": CommandSpec(
+            "Build an alpha-SiO2 slab plus hemispherical N2 nanobubble solution model.",
+            module="nnpgen.geo.sio2_nanobubble",
+        ),
     },
     "train": {
         "fill-finetune-systems": CommandSpec("Fill DeepMD fine-tuning systems arrays.", module="nnpgen.train.finetune"),
@@ -156,6 +172,7 @@ COMMANDS: Dict[str, Dict[str, CommandSpec]] = {
     },
     "monitor": {
         "watchdog": CommandSpec("Run the controller watchdog.", module="nnpgen.monitor.watchdog"),
+        "summary": CommandSpec("Summarize manifests, frame runs, and XYZ coverage.", module="nnpgen.monitor.summary"),
     },
 }
 
