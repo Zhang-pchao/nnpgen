@@ -130,14 +130,14 @@ COMMANDS: Dict[str, Dict[str, CommandSpec]] = {
             runner="nnpgen.dft.completed_to_dpdata:run_stage2_completed_to_dpdata",
         ),
         "controller": CommandSpec(
-            "Run the Stage-2 DFT controller.",
-            add_args="nnpgen.dft.controller:add_stage2_step20_controller_arguments",
-            runner="nnpgen.dft.controller:run_stage2_step20_controller",
+            "Run the DFT controller.",
+            add_args="nnpgen.dft.controller:add_controller_arguments",
+            runner="nnpgen.dft.controller:run_controller",
         ),
         "controller-status": CommandSpec(
-            "Summarize a Stage-2 DFT controller.",
-            add_args="nnpgen.dft.controller:add_stage2_step20_status_arguments",
-            runner="nnpgen.dft.controller:run_stage2_step20_status",
+            "Summarize a DFT controller.",
+            add_args="nnpgen.dft.controller:add_controller_status_arguments",
+            runner="nnpgen.dft.controller:run_controller_status",
         ),
         "archive": CommandSpec(
             "Scan and stage terminal remote DFT frames.",
@@ -153,9 +153,14 @@ COMMANDS: Dict[str, Dict[str, CommandSpec]] = {
     "dataset": {
         "dpdata-to-extxyz": CommandSpec("Convert DP data to Extended XYZ.", module="nnpgen.dataset.dpdata_to_extxyz"),
         "vasp-to-dpdata": CommandSpec("Convert VASP OUTCAR/POSCAR outputs to DP data.", module="nnpgen.dataset.vasp_sp2dpdata"),
+        "validate-dpdata": CommandSpec(
+            "Validate RAW, NPY, set.000, and type metadata.",
+            add_args="nnpgen.dataset.validation:add_validation_arguments",
+            runner="nnpgen.dataset.validation:run_validation",
+        ),
         "split-train-test": CommandSpec("Split DP datasets into train/test roots.", module="nnpgen.dataset.split_train_test"),
         "check-run-systems": CommandSpec("Validate DeepMD run.json system paths.", module="nnpgen.dataset.check_run_systems"),
-        "build-exclude-list": CommandSpec("Build explicit Stage-2 exclusion keys.", module="nnpgen.dataset.build_exclude_list"),
+        "build-exclude-list": CommandSpec("Build explicit DFT exclusion keys.", module="nnpgen.dataset.build_exclude_list"),
     },
     "geo": {
         "build-sio2-nanobubble": CommandSpec(
@@ -173,6 +178,11 @@ COMMANDS: Dict[str, Dict[str, CommandSpec]] = {
     "monitor": {
         "watchdog": CommandSpec("Run the controller watchdog.", module="nnpgen.monitor.watchdog"),
         "summary": CommandSpec("Summarize manifests, frame runs, and XYZ coverage.", module="nnpgen.monitor.summary"),
+        "schedulers": CommandSpec(
+            "Summarize PBS and Slurm jobs for explicit run roots.",
+            add_args="nnpgen.monitor.schedulers:add_scheduler_arguments",
+            runner="nnpgen.monitor.schedulers:run_scheduler_summary",
+        ),
     },
 }
 

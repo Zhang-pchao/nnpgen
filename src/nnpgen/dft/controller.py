@@ -1503,7 +1503,7 @@ def _build_ssh_extra_args(args):
     return out
 
 
-def add_stage2_step20_controller_arguments(parser):
+def add_controller_arguments(parser):
     parser.add_argument('--job-name', default=DEFAULT_JOB_NAME)
     parser.add_argument('--stage1-manifest', default=str(DEFAULT_STAGE1_MANIFEST))
     parser.add_argument('--stage1-run-root', default=str(DEFAULT_STAGE1_RUN_ROOT))
@@ -1542,7 +1542,7 @@ def add_stage2_step20_controller_arguments(parser):
     parser.add_argument('--scheduler-notes', default=str(DEFAULT_PLAN_ROOT / 'scheduler_notes.md'))
 
 
-def run_stage2_step20_controller(args):
+def run_controller(args):
     stage1_manifest_path = abs_path(args.stage1_manifest)
     stage1_run_root = abs_path(args.stage1_run_root)
     stage2_manifest_path = abs_path(args.stage2_manifest)
@@ -1797,7 +1797,7 @@ def run_stage2_step20_controller(args):
 
     return last_result
 
-def add_stage2_step20_status_arguments(parser):
+def add_controller_status_arguments(parser):
     parser.add_argument('--stage1-run-root', default=str(DEFAULT_STAGE1_RUN_ROOT))
     parser.add_argument('--stage2-manifest', default=str(DEFAULT_STAGE2_MANIFEST))
     parser.add_argument('--controller-state', default=str(DEFAULT_STAGE2_CONTROLLER_STATE))
@@ -1813,7 +1813,7 @@ def add_stage2_step20_status_arguments(parser):
     parser.add_argument('--refresh', action='store_true')
 
 
-def run_stage2_step20_status(args):
+def run_controller_status(args):
     stage1_run_root = abs_path(args.stage1_run_root)
     manifest_path = abs_path(args.stage2_manifest)
     state_path = abs_path(args.controller_state)
@@ -1949,12 +1949,12 @@ def run_stage2_step20_status(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description='Stage-2 mirrored DFT controller')
+    parser = argparse.ArgumentParser(description='DFT controller')
     sub = parser.add_subparsers(dest='command')
     p_controller = sub.add_parser('controller', help='Run one cycle or continuous periodic controller')
-    add_stage2_step20_controller_arguments(p_controller)
-    p_status = sub.add_parser('status', help='Show Stage-2 summary')
-    add_stage2_step20_status_arguments(p_status)
+    add_controller_arguments(p_controller)
+    p_status = sub.add_parser('status', help='Show DFT summary')
+    add_controller_status_arguments(p_status)
     return parser
 
 
@@ -1965,9 +1965,9 @@ def main():
         parser.print_help()
         raise SystemExit(2)
     if args.command == 'controller':
-        run_stage2_step20_controller(args)
+        run_controller(args)
     elif args.command == 'status':
-        run_stage2_step20_status(args)
+        run_controller_status(args)
     else:
         raise ValueError('Unsupported command: {0}'.format(args.command))
 

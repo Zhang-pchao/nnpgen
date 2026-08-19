@@ -32,3 +32,6 @@ def test_new_generic_commands_are_listed():
     assert "recover" in result.stdout
     result = run_cli("monitor", "--help")
     assert "summary" in result.stdout
+    assert "schedulers" in result.stdout
+    result = run_cli("dataset", "--help")
+    assert "validate-dpdata" in result.stdout

@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from ..dataset.validation import require_valid_dp_dataset
 from ..utils import ensure_dir, write_json
 
 
@@ -33,22 +38,26 @@ find "$root" -mindepth 2 -maxdepth 2 -type d -print | sort | while IFS= read -r 
       test -n "$status" && break
     fi
   done
-  finished=0; failed=0; poscar=0; outcar=0; task_info=0; frame_info=0
+  finished=0; failed=0; poscar=0; outcar=0; ediff=0; footer=0; task_info=0; frame_info=0
   test -f "$frame_dir/tag_finished" && finished=1
   test -f "$frame_dir/tag_failed" && failed=1
   test -f "$frame_dir/POSCAR" && poscar=1
   test -f "$frame_dir/OUTCAR" && outcar=1
   test -f "$frame_dir/task_info.json" && task_info=1
   test -f "$frame_dir/frame_info.json" && frame_info=1
+  if test "$outcar" = 1; then
+    grep -Fq 'aborting loop because EDIFF is reached' "$frame_dir/OUTCAR" && ediff=1
+    grep -Fq 'General timing and accounting informations for this job:' "$frame_dir/OUTCAR" && footer=1
+  fi
   result=pending
-  if test "$status" = finished && test "$poscar" = 1 && test "$outcar" = 1; then
+  if test "$finished" = 1 && test "$failed" = 0 && test "$poscar" = 1 && test "$outcar" = 1 && test "$ediff" = 1 && test "$footer" = 1; then
     result=success
   elif test "$failed" = 1 || test "$status" = failed; then
     result=failed
   fi
   rel=${frame_dir#"$root"/}
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$system" "$frame" "$result" "$status" "$finished" "$failed" "$poscar" "$outcar" "$task_info" "$frame_info" "$rel"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$system" "$frame" "$result" "$status" "$finished" "$failed" "$poscar" "$outcar" "$ediff" "$footer" "$task_info" "$frame_info" "$rel"
 done
 '''
 
@@ -76,7 +85,7 @@ def parse_remote_spec(spec: str) -> RemoteTarget:
     host, root = endpoint.split(":", 1)
     host = host.strip()
     root = root.strip()
-    if not host or not root or not root.startswith("/"):
+    if not host or not root or not root.startswith("/") or root == "/":
         raise ValueError("Remote target requires a host and absolute root: {0}".format(spec))
     return RemoteTarget(name=name, host=host, root=root.rstrip("/") or "/")
 
@@ -87,9 +96,9 @@ def parse_scan_rows(raw: str, target_name: str = "") -> Dict[Tuple[str, str], Di
     rows: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for line in str(raw or "").splitlines():
         fields = line.split("\t")
-        if len(fields) != 11:
+        if len(fields) != 13:
             continue
-        system, frame, result, status, finished, failed, poscar, outcar, task_info, frame_info, relative = fields
+        system, frame, result, status, finished, failed, poscar, outcar, ediff, footer, task_info, frame_info, relative = fields
         rows[(system, frame)] = {
             "system": system,
             "frame": frame,
@@ -99,6 +108,8 @@ def parse_scan_rows(raw: str, target_name: str = "") -> Dict[Tuple[str, str], Di
             "tag_failed": failed == "1",
             "poscar": poscar == "1",
             "outcar": outcar == "1",
+            "ediff_reached": ediff == "1",
+            "normal_footer": footer == "1",
             "task_info": task_info == "1",
             "frame_info": frame_info == "1",
             "relative": relative,
@@ -112,11 +123,20 @@ def scan_target(target: RemoteTarget) -> Dict[Tuple[str, str], Dict[str, Any]]:
 
     command = "bash -s -- {0}".format(shlex.quote(target.root))
     result = subprocess.run(
-        ["ssh", target.host, command],
+        [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+            "-o", "ServerAliveInterval=5",
+            "-o", "ServerAliveCountMax=2",
+            target.host,
+            command,
+        ],
         input=REMOTE_SCAN_SCRIPT,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        timeout=60,
         check=True,
     )
     return parse_scan_rows(result.stdout, target.name)
@@ -172,7 +192,7 @@ def _copy_frames(target: RemoteTarget, rows: Iterable[Mapping[str, Any]], destin
         return 0
     ensure_dir(destination)
     subprocess.run(
-        ["rsync", "-a", "--files-from=-", "{0}:{1}/".format(target.host, target.root), str(destination) + "/"],
+        ["rsync", "-a", "--timeout=60", "--files-from=-", "{0}:{1}/".format(target.host, target.root), str(destination) + "/"],
         input="\n".join(files) + "\n",
         text=True,
         stdout=subprocess.PIPE,
@@ -191,7 +211,7 @@ def archive_manifest(
     require_tag_finished: bool = True,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
-    """Scan and stage complete systems, returning a reproducible report."""
+    """Scan and stage convergence-qualified frames, returning an audit report."""
 
     target_map = {target.name: target for target in targets}
     if len(target_map) != len(list(targets)):
@@ -202,9 +222,19 @@ def archive_manifest(
     for target in targets:
         try:
             scans[target.name] = scan_target(target)
-        except (OSError, subprocess.CalledProcessError) as exc:
+        except (OSError, subprocess.SubprocessError) as exc:
             scan_errors[target.name] = str(exc)
             scans[target.name] = {}
+
+    duplicate_successes = []
+    for key in {entry_key(entry) for entry in records}:
+        successful_targets = sorted(
+            name for name, rows in scans.items() if rows.get(key, {}).get("result") == "success"
+        )
+        if len(successful_targets) > 1:
+            duplicate_successes.append({"task_key": "/".join(key), "targets": successful_targets})
+    if duplicate_successes:
+        raise ValueError("Converged task keys exist on multiple targets: {0}".format(duplicate_successes[:10]))
 
     by_system: Dict[str, List[Mapping[str, Any]]] = defaultdict(list)
     for entry in records:
@@ -212,15 +242,22 @@ def archive_manifest(
         by_system[system].append(entry)
 
     report: Dict[str, Any] = {
-        "schema_version": "nnpgen.archive.v1",
+        "schema_version": "nnpgen.archive.v2",
         "manifest_kind": manifest.get("kind", ""),
         "record_count": len(records),
         "targets": [{"name": x.name, "host": x.host, "root": x.root} for x in targets],
         "scan_errors": scan_errors,
+        "duplicate_successes": duplicate_successes,
         "systems": {},
         "dry_run": bool(dry_run),
     }
-    staging_root = Path(work_root or (Path(output_root) / ".archive_work"))
+    staging_base = Path(work_root or (Path(output_root) / ".archive_work"))
+    if dry_run:
+        staging_root = staging_base
+    else:
+        ensure_dir(staging_base)
+        staging_root = Path(tempfile.mkdtemp(prefix="archive-", dir=str(staging_base)))
+    report["staging_root"] = str(staging_root)
     for system, entries in sorted(by_system.items()):
         successes: List[Dict[str, Any]] = []
         failures: List[Dict[str, Any]] = []
@@ -241,7 +278,14 @@ def archive_manifest(
             if row["result"] == "failed":
                 failures.append({"frame": frame, "target": target_name, "remote_status": row})
                 continue
-            marked_success = row["result"] == "success" and row["poscar"] and row["outcar"]
+            marked_success = (
+                row["result"] == "success"
+                and row["poscar"]
+                and row["outcar"]
+                and row.get("ediff_reached", False)
+                and row.get("normal_footer", False)
+                and not row["tag_failed"]
+            )
             if require_tag_finished and not row["tag_finished"]:
                 marked_success = False
             if marked_success:
@@ -257,20 +301,25 @@ def archive_manifest(
             "pending_frames": len(pending),
             "failures": failures,
             "pending": pending,
-            "status": "skipped_incomplete" if pending else ("completed_with_failures" if failures else "ready"),
+            "status": "partial" if pending or failures else "ready",
         }
-        if successes and not pending and not dry_run:
-            if len({str(row["target"]) for row in successes}) > 1:
-                raise ValueError("A single system spans multiple targets: {0}".format(system))
-            target = target_map[str(successes[0]["target"])]
-            rec["staged_frames"] = _copy_frames(target, successes, staging_root)
+        if successes and not dry_run:
+            staged = 0
+            by_target: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for row in successes:
+                by_target[str(row["target"])].append(row)
+            for target_name, target_rows in by_target.items():
+                staged += _copy_frames(target_map[target_name], target_rows, staging_root)
+            rec["staged_frames"] = staged
             rec["staging_root"] = str(staging_root)
-            rec["status"] = "staged"
+            rec["status"] = "staged_partial" if pending or failures else "staged"
         report["systems"][system] = rec
 
     report["summary"] = {
         "ready_systems": sum(1 for x in report["systems"].values() if x["status"] in {"ready", "staged"}),
         "staged_systems": sum(1 for x in report["systems"].values() if x["status"] == "staged"),
+        "successful_frames": sum(int(x["successful_frames"]) for x in report["systems"].values()),
+        "staged_frames": sum(int(x.get("staged_frames", 0)) for x in report["systems"].values()),
         "failed_frames": sum(int(x["failed_frames"]) for x in report["systems"].values()),
         "pending_frames": sum(int(x["pending_frames"]) for x in report["systems"].values()),
     }
@@ -282,9 +331,9 @@ def add_archive_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--remote", dest="remote_specs", action="append", required=True, metavar="NAME=HOST:/ROOT", help="Named remote frame root; repeat for multiple targets.")
     parser.add_argument("--output-root", type=Path, required=True, help="Local archive output/report root.")
     parser.add_argument("--work-root", type=Path, default=None, help="Local staging root; defaults to OUTPUT_ROOT/.archive_work.")
-    parser.add_argument("--allow-unmarked-success", action="store_true", help="Accept finished status plus OUTCAR without tag_finished.")
     parser.add_argument("--dry-run", action="store_true", help="Scan and report without copying frames.")
     parser.add_argument("--convert", action="store_true", help="Run the local VASP-to-DP-data converter after staging.")
+    parser.add_argument("--dataset-root", type=Path, default=None, help="Validated DP dataset destination; defaults to OUTPUT_ROOT/dpdata.")
     parser.add_argument("--converter-module", default="nnpgen.dataset.vasp_sp2dpdata", help="Python module used with --convert.")
     parser.add_argument("--require-finished-task-info", action="store_true", help="Pass task_info.json completion validation to the converter.")
     parser.add_argument("--report-name", default="archive_report.json", help="Report filename under output root.")
@@ -301,7 +350,7 @@ def run_archive(args: argparse.Namespace) -> Dict[str, Any]:
         targets,
         output_root,
         work_root=args.work_root,
-        require_tag_finished=not bool(args.allow_unmarked_success),
+        require_tag_finished=True,
         dry_run=bool(args.dry_run),
     )
     report["manifest"] = str(manifest_path)
@@ -309,31 +358,83 @@ def run_archive(args: argparse.Namespace) -> Dict[str, Any]:
     ensure_dir(output_root)
     report_path = output_root / str(args.report_name)
     write_json(report_path, report)
-    if bool(args.convert) and not bool(args.dry_run) and report["summary"]["staged_systems"]:
-        work_root = Path(args.work_root or (output_root / ".archive_work")).expanduser().resolve()
-        command = [
-            sys.executable,
-            "-m",
-            str(args.converter_module),
-            "--input-root",
-            str(work_root),
-            "--output-dir",
-            str(output_root),
-            "--require-tag-finished",
-        ]
-        if bool(args.require_finished_task_info):
-            command.append("--require-finished-task-info")
+    if bool(args.convert) and not bool(args.dry_run) and report["summary"]["staged_frames"]:
+        work_root = Path(report["staging_root"]).expanduser().resolve()
+        dataset_root = Path(args.dataset_root or (output_root / "dpdata")).expanduser().resolve()
         try:
-            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-            report["conversion"] = {"status": "converted", "stdout": result.stdout[-4000:]}
-        except subprocess.CalledProcessError as exc:
-            report["conversion"] = {"status": "failed", "stderr": exc.stderr[-4000:]}
+            if dataset_root == output_root:
+                raise ValueError("dataset-root must differ from output-root")
+            report["conversion"] = rebuild_dp_dataset(
+                work_root,
+                dataset_root,
+                converter_module=str(args.converter_module),
+                require_finished_task_info=bool(args.require_finished_task_info),
+            )
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            report["conversion"] = {"status": "failed", "error": str(exc)[-4000:]}
     elif bool(args.convert):
         report["conversion"] = {"status": "skipped", "reason": "no_staged_systems_or_dry_run"}
     write_json(report_path, report)
     report["report_path"] = str(report_path)
     print(json.dumps(report["summary"], indent=2, sort_keys=True))
     return report
+
+
+def rebuild_dp_dataset(
+    work_root: Path,
+    dataset_root: Path,
+    *,
+    converter_module: str = "nnpgen.dataset.vasp_sp2dpdata",
+    require_finished_task_info: bool = False,
+) -> Dict[str, Any]:
+    """Convert all staged frames, validate them, then atomically install."""
+
+    work_root = Path(work_root).expanduser().resolve()
+    dataset_root = Path(dataset_root).expanduser().resolve()
+    ensure_dir(dataset_root.parent)
+    rebuild_root = Path(tempfile.mkdtemp(prefix=".{0}.rebuild-".format(dataset_root.name), dir=str(dataset_root.parent)))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_root = dataset_root.with_name(dataset_root.name + ".backup-" + stamp)
+    command = [
+        sys.executable,
+        "-m",
+        converter_module,
+        "--input-root",
+        str(work_root),
+        "--output-dir",
+        str(rebuild_root),
+        "--require-tag-finished",
+    ]
+    if require_finished_task_info:
+        command.append("--require-finished-task-info")
+    backup_created = False
+    try:
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        require_valid_dp_dataset(rebuild_root)
+        if dataset_root.exists():
+            if backup_root.exists():
+                raise ValueError("Backup path already exists: {0}".format(backup_root))
+            os.replace(dataset_root, backup_root)
+            backup_created = True
+        try:
+            os.replace(rebuild_root, dataset_root)
+            validation = require_valid_dp_dataset(dataset_root)
+        except Exception:
+            if dataset_root.exists():
+                os.replace(dataset_root, rebuild_root)
+            if backup_created:
+                os.replace(backup_root, dataset_root)
+            raise
+        return {
+            "status": "installed",
+            "dataset_root": str(dataset_root),
+            "backup_root": str(backup_root) if backup_created else "",
+            "validation": validation,
+            "converter_stdout": result.stdout[-2000:],
+        }
+    finally:
+        if rebuild_root.exists():
+            shutil.rmtree(rebuild_root)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
