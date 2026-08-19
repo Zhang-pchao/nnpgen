@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import glob
 import json
@@ -10,13 +12,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError:  # Keep CLI help available without dataset extras.
+    np = None
 
 from ..config import DEFAULT_PLAN_ROOT, DEFAULT_REMOTE_HOST, ELEMENT_ORDER, VASP15_RUN_ROOT
 
 
-DEFAULT_STAGE2_MANIFEST_GLOB = str(DEFAULT_PLAN_ROOT / "stage2_*_manifest.json")
-DEFAULT_STAGE2_RUN_ROOTS_15 = [str(VASP15_RUN_ROOT / "stage2_dft")]
+DEFAULT_DFT_MANIFEST_GLOB = str(DEFAULT_PLAN_ROOT / "dft_*_manifest.json")
+DEFAULT_DFT_RUN_ROOTS = [str(VASP15_RUN_ROOT / "dft")]
 TASK_KEY_PATTERN = re.compile(r"^system_[^/]+__frame_\d+$")
 
 
@@ -155,7 +160,7 @@ def _load_exclude_list(exclude_list_path: Path, input_root: Path) -> Dict[str, o
     }
 
 
-def _load_stage2_skip_keys(
+def _load_dft_skip_keys(
     manifest_glob: str,
     statuses: Optional[Set[str]] = None,
 ) -> Dict[str, object]:
@@ -188,11 +193,13 @@ def _load_stage2_skip_keys(
             if statuses and status and status not in statuses:
                 continue
 
-            task_key = str(e.get("stage1_task_name", "")).strip()
+            task_key = str(e.get("task_key") or e.get("source_task_key") or e.get("stage1_task_name") or "").strip()
+            if not task_key and e.get("system_name") and e.get("frame_name"):
+                task_key = "{0}__{1}".format(e["system_name"], e["frame_name"])
             if task_key:
                 task_keys.add(task_key)
 
-            src_poscar = str(e.get("source_poscar_path_11", "")).strip()
+            src_poscar = str(e.get("source_structure_path") or e.get("source_poscar_path_11") or "").strip()
             if src_poscar:
                 try:
                     source_poscars.add(str(Path(src_poscar).resolve()))
@@ -209,8 +216,8 @@ def _load_stage2_skip_keys(
     }
 
 
-def _load_stage2_skip_keys_from_15(host_15: str, run_roots_15: Sequence[str]) -> Dict[str, object]:
-    roots = [str(x).strip() for x in run_roots_15 if str(x).strip()]
+def _load_remote_skip_keys(remote_host: str, run_roots: Sequence[str]) -> Dict[str, object]:
+    roots = [str(x).strip() for x in run_roots if str(x).strip()]
     if not roots:
         return {"task_keys": set(), "frame_dir_count": 0, "roots": [], "errors": ["no run roots provided"]}
 
@@ -223,7 +230,7 @@ def _load_stage2_skip_keys_from_15(host_15: str, run_roots_15: Sequence[str]) ->
 
     remote_cmd = "set -euo pipefail; " + " ; ".join(find_cmds)
     proc = subprocess.run(
-        ["ssh", host_15, "bash -lc {0}".format(shlex.quote(remote_cmd))],
+        ["ssh", remote_host, "bash -lc {0}".format(shlex.quote(remote_cmd))],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
@@ -258,9 +265,9 @@ def _load_stage2_skip_keys_from_15(host_15: str, run_roots_15: Sequence[str]) ->
     }
 
 
-def _filter_stage2_selected_frames(
+def _filter_dft_selected_frames(
     frame_dirs: List[Path],
-    stage1_task_keys: Set[str],
+    selected_task_keys: Set[str],
     source_poscar_paths: Set[str],
 ) -> Tuple[List[Path], List[Dict[str, str]]]:
     kept: List[Path] = []
@@ -271,10 +278,10 @@ def _filter_stage2_selected_frames(
         poscar_path = str((frame_dir / "POSCAR").resolve())
 
         reason = ""
-        if task_key and task_key in stage1_task_keys:
-            reason = "matched_stage1_task_name"
+        if task_key and task_key in selected_task_keys:
+            reason = "matched_task_key"
         elif poscar_path in source_poscar_paths:
-            reason = "matched_source_poscar_path_11"
+            reason = "matched_source_structure_path"
 
         if reason:
             skipped.append(
@@ -457,54 +464,54 @@ def _collect_by_group(frame_dirs: List[Path], type_map: List[str]) -> Tuple["Ord
     return grouped, skipped
 
 
-def add_stage1_poscar_predict_arguments(parser: argparse.ArgumentParser) -> None:
+def add_predict_poscar_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--input-root", required=True, help="Path containing system_*/frame_*/POSCAR or frame_* directories")
     parser.add_argument("--output-dir", required=True, help="Output DP-data directory")
     parser.add_argument("--model", required=True, help="DeepMD model checkpoint (.pt/.pb)")
     parser.add_argument(
         "--type-map",
         default=",".join(ELEMENT_ORDER),
-        help="Comma-separated type map, default H,O,N,Na,Cl,Ti,C,Si",
+        help="Comma-separated output type map; model atom types are read from the checkpoint.",
     )
     parser.add_argument("--max-frames", type=int, default=0, help="0 means all")
     parser.add_argument("--batch-size", type=int, default=8, help="Inference batch size per composition group")
     parser.add_argument(
-        "--skip-stage2-selected",
-        dest="skip_stage2_selected",
+        "--skip-dft-selected",
+        dest="skip_dft_selected",
         action="store_true",
         default=True,
-        help="Skip frames that already appear in Stage-2 manifests (default: enabled)",
+        help="Skip frames that already appear in DFT manifests (default: enabled).",
     )
     parser.add_argument(
-        "--no-skip-stage2-selected",
-        dest="skip_stage2_selected",
+        "--no-skip-dft-selected",
+        dest="skip_dft_selected",
         action="store_false",
-        help="Disable Stage-2 selection skipping",
+        help="Disable DFT selection skipping.",
     )
     parser.add_argument(
-        "--stage2-manifest-glob",
-        default=DEFAULT_STAGE2_MANIFEST_GLOB,
-        help="Glob for Stage-2 manifest json files",
+        "--dft-manifest-glob",
+        default=DEFAULT_DFT_MANIFEST_GLOB,
+        help="Glob for DFT manifest JSON files.",
     )
     parser.add_argument(
-        "--stage2-skip-statuses",
+        "--dft-skip-statuses",
         default="",
         help="Optional comma-separated status filter for skip lookup; empty means all statuses",
     )
     parser.add_argument(
-        "--host-15",
+        "--remote-host",
         default=DEFAULT_REMOTE_HOST,
-        help="SSH host alias for optional fallback frame scan on server 15",
+        help="SSH host for the optional fallback frame scan.",
     )
     parser.add_argument(
-        "--stage2-run-roots-15",
-        default=",".join(DEFAULT_STAGE2_RUN_ROOTS_15),
-        help="Comma-separated Stage-2/Stage-3 run roots on server 15 for fallback scan",
+        "--dft-run-roots",
+        default=",".join(DEFAULT_DFT_RUN_ROOTS),
+        help="Comma-separated remote DFT run roots for fallback scanning.",
     )
     parser.add_argument(
-        "--fallback-scan-15",
+        "--fallback-remote-scan",
         action="store_true",
-        help="Additionally scan server 15 stage2/stage3 run directories for selected frame keys",
+        help="Also scan remote DFT run directories for selected frame keys.",
     )
     parser.add_argument(
         "--exclude-list",
@@ -513,17 +520,19 @@ def add_stage1_poscar_predict_arguments(parser: argparse.ArgumentParser) -> None
     )
 
 
-def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
+def run_predict_poscar(args: argparse.Namespace) -> Dict[str, object]:
+    if np is None:
+        raise RuntimeError('NumPy is required; install nnpgen with the "dataset" extra')
     input_root = Path(args.input_root)
     output_dir = Path(args.output_dir)
     model_path = Path(args.model)
-    type_map = [x.strip() for x in str(args.type_map).split(",") if x.strip()]
+    output_type_map = [x.strip() for x in str(args.type_map).split(",") if x.strip()]
 
     if not input_root.exists():
         raise ValueError("input-root not found: {0}".format(input_root))
     if not model_path.is_file():
         raise ValueError("model not found: {0}".format(model_path))
-    if not type_map:
+    if not output_type_map:
         raise ValueError("type-map is empty")
     if int(args.batch_size) <= 0:
         raise ValueError("batch-size must be > 0")
@@ -533,9 +542,9 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
         raise ValueError("No frame directories with POSCAR found under: {0}".format(input_root))
 
     frame_dirs = frame_dirs_all
-    stage2_skip_meta: Dict[str, object] = {
-        "enabled": bool(args.skip_stage2_selected),
-        "manifest_glob": str(args.stage2_manifest_glob),
+    dft_skip_meta: Dict[str, object] = {
+        "enabled": bool(args.skip_dft_selected),
+        "manifest_glob": str(args.dft_manifest_glob),
         "manifest_count": 0,
         "entry_count": 0,
         "skip_task_key_count": 0,
@@ -544,10 +553,10 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
         "frames_skipped_examples": [],
         "statuses_filter": [],
         "malformed_manifests": [],
-        "fallback_scan_15": {
+        "fallback_remote_scan": {
             "enabled": False,
-            "host_15": str(args.host_15),
-            "run_roots_15": [],
+            "remote_host": str(args.remote_host),
+            "run_roots": [],
             "frame_dir_count": 0,
             "task_key_count": 0,
             "errors": [],
@@ -564,45 +573,45 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
         "invalid_entries": [],
     }
 
-    if bool(args.skip_stage2_selected):
-        statuses_filter = {x.strip().lower() for x in str(args.stage2_skip_statuses).split(",") if x.strip()}
-        skip_info = _load_stage2_skip_keys(str(args.stage2_manifest_glob), statuses_filter or None)
-        stage2_skip_meta["manifest_count"] = int(skip_info.get("manifest_count", 0))
-        stage2_skip_meta["entry_count"] = int(skip_info.get("entry_count", 0))
-        stage2_skip_meta["skip_task_key_count"] = len(skip_info.get("task_keys", set()))
-        stage2_skip_meta["skip_source_poscar_count"] = len(skip_info.get("source_poscar_paths", set()))
-        stage2_skip_meta["statuses_filter"] = sorted(list(statuses_filter))
-        stage2_skip_meta["malformed_manifests"] = list(skip_info.get("malformed_manifests", []))
+    if bool(args.skip_dft_selected):
+        statuses_filter = {x.strip().lower() for x in str(args.dft_skip_statuses).split(",") if x.strip()}
+        skip_info = _load_dft_skip_keys(str(args.dft_manifest_glob), statuses_filter or None)
+        dft_skip_meta["manifest_count"] = int(skip_info.get("manifest_count", 0))
+        dft_skip_meta["entry_count"] = int(skip_info.get("entry_count", 0))
+        dft_skip_meta["skip_task_key_count"] = len(skip_info.get("task_keys", set()))
+        dft_skip_meta["skip_source_poscar_count"] = len(skip_info.get("source_poscar_paths", set()))
+        dft_skip_meta["statuses_filter"] = sorted(list(statuses_filter))
+        dft_skip_meta["malformed_manifests"] = list(skip_info.get("malformed_manifests", []))
 
         skip_task_keys: Set[str] = set(skip_info.get("task_keys", set()))
         skip_poscar_paths: Set[str] = set(skip_info.get("source_poscar_paths", set()))
 
-        do_fallback_15 = bool(args.fallback_scan_15) or len(skip_task_keys) == 0
-        if do_fallback_15:
-            roots_15 = [x.strip() for x in str(args.stage2_run_roots_15).split(",") if x.strip()]
-            fb = _load_stage2_skip_keys_from_15(str(args.host_15), roots_15)
+        do_fallback = bool(args.fallback_remote_scan)
+        if do_fallback:
+            run_roots = [x.strip() for x in str(args.dft_run_roots).split(",") if x.strip()]
+            fb = _load_remote_skip_keys(str(args.remote_host), run_roots)
             fb_keys = set(fb.get("task_keys", set()))
             skip_task_keys.update(fb_keys)
 
-            stage2_skip_meta["fallback_scan_15"] = {
+            dft_skip_meta["fallback_remote_scan"] = {
                 "enabled": True,
-                "host_15": str(args.host_15),
-                "run_roots_15": roots_15,
+                "remote_host": str(args.remote_host),
+                "run_roots": run_roots,
                 "frame_dir_count": int(fb.get("frame_dir_count", 0)),
                 "task_key_count": len(fb_keys),
                 "errors": list(fb.get("errors", [])),
             }
-            stage2_skip_meta["skip_task_key_count"] = len(skip_task_keys)
+            dft_skip_meta["skip_task_key_count"] = len(skip_task_keys)
 
-        frame_dirs, skipped_stage2 = _filter_stage2_selected_frames(
+        frame_dirs, skipped_dft = _filter_dft_selected_frames(
             frame_dirs=frame_dirs,
-            stage1_task_keys=skip_task_keys,
+            selected_task_keys=skip_task_keys,
             source_poscar_paths=skip_poscar_paths,
         )
-        stage2_skip_meta["frames_skipped_count"] = len(skipped_stage2)
-        stage2_skip_meta["frames_skipped_examples"] = skipped_stage2[:50]
+        dft_skip_meta["frames_skipped_count"] = len(skipped_dft)
+        dft_skip_meta["frames_skipped_examples"] = skipped_dft[:50]
 
-    frames_after_stage2_skip = len(frame_dirs)
+    frames_after_dft_skip = len(frame_dirs)
 
     if str(args.exclude_list).strip():
         excl = _load_exclude_list(Path(str(args.exclude_list).strip()), input_root)
@@ -622,20 +631,22 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
         exclude_list_meta["frames_skipped_examples"] = skipped_manual[:50]
 
     if not frame_dirs:
-        raise ValueError("No frames left after Stage-2/exclude filters under: {0}".format(input_root))
+        raise ValueError("No frames left after DFT/exclude filters under: {0}".format(input_root))
 
     frames_after_all_filters = len(frame_dirs)
     if int(args.max_frames) > 0:
         frame_dirs = frame_dirs[: int(args.max_frames)]
     frames_after_max_frames = len(frame_dirs)
 
-    grouped, skipped_group = _collect_by_group(frame_dirs, type_map)
-    if not grouped:
-        raise ValueError("No valid frames after POSCAR parsing")
-
     from deepmd.infer import DeepPot
 
     dp = DeepPot(str(model_path))
+    model_type_map = [str(value) for value in dp.get_type_map()]
+    if not model_type_map:
+        raise ValueError("model type map is empty")
+    grouped, skipped_group = _collect_by_group(frame_dirs, model_type_map)
+    if not grouped:
+        raise ValueError("No valid frames after POSCAR parsing")
 
     group_items = sorted(grouped.items(), key=lambda kv: (sum(kv[0][1]), list(kv[0][0])))
     single_group = len(group_items) == 1
@@ -646,6 +657,9 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
         elements = list(key[0])
         counts = list(key[1])
         natoms = int(sum(counts))
+        missing_output_types = sorted(set(elements) - set(output_type_map))
+        if missing_output_types:
+            raise ValueError("Elements missing from output type map: {0}".format(missing_output_types))
 
         if single_group:
             out_group = output_dir
@@ -670,7 +684,7 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
 
             for frame_dir in batch_frames:
                 try:
-                    parsed = _parse_poscar(frame_dir / "POSCAR", type_map)
+                    parsed = _parse_poscar(frame_dir / "POSCAR", model_type_map)
                     atype = parsed["atom_types"]
                     if int(parsed["natoms"]) != natoms:
                         raise ValueError("natoms changed inside group")
@@ -734,7 +748,7 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
             np.save(str(set_dir / "box.npy"), box_arr)
             np.save(str(set_dir / "virial.npy"), virial_arr)
 
-            _write_type_files(out_group, elements, counts, type_map)
+            _write_type_files(out_group, elements, counts, output_type_map)
 
             with (out_group / "source_frames.txt").open("w") as fw:
                 for fr in converted_frames:
@@ -758,12 +772,13 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
         "input_root": str(input_root),
         "output_dir": str(output_dir),
         "model": str(model_path),
-        "type_map": type_map,
+        "output_type_map": output_type_map,
+        "model_type_map": model_type_map,
         "frames_discovered": len(frame_dirs_all),
-        "frames_after_stage2_skip": frames_after_stage2_skip,
+        "frames_after_dft_skip": frames_after_dft_skip,
         "frames_after_all_filters": frames_after_all_filters,
         "frames_after_max_frames": frames_after_max_frames,
-        "stage2_skip": stage2_skip_meta,
+        "dft_skip": dft_skip_meta,
         "exclude_list": exclude_list_meta,
         "groups": summaries,
         "group_count": len(summaries),
@@ -782,10 +797,10 @@ def run_stage1_poscar_predict(args: argparse.Namespace) -> Dict[str, object]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Predict Stage-1 POSCAR structures using DeepMD model and export DP-data format")
-    add_stage1_poscar_predict_arguments(parser)
+    parser = argparse.ArgumentParser(description="Predict POSCAR structures using a DeepMD model and export DP data")
+    add_predict_poscar_arguments(parser)
     args = parser.parse_args()
-    run_stage1_poscar_predict(args)
+    run_predict_poscar(args)
 
 
 if __name__ == "__main__":

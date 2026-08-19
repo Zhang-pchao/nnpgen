@@ -264,7 +264,7 @@ def _convert_one_group(
 
 
 def add_vasp_sp2dpdata_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--input-root", required=True, help="Stage-2 root containing system_*/frame_* on server 15")
+    parser.add_argument("--input-root", required=True, help="Root containing system_*/frame_*/POSCAR and OUTCAR files")
     parser.add_argument("--output-dir", required=True, help="Output DP dataset directory")
     parser.add_argument(
         "--type-order",
@@ -360,7 +360,7 @@ def run_vasp_sp2dpdata(args: argparse.Namespace) -> Dict[str, object]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert Stage-2 VASP OUTCAR/POSCAR frames to DP data")
+    parser = argparse.ArgumentParser(description="Convert VASP OUTCAR/POSCAR frames to DP data")
     add_vasp_sp2dpdata_arguments(parser)
     args = parser.parse_args()
     run_vasp_sp2dpdata(args)

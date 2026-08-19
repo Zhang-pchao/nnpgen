@@ -52,6 +52,23 @@ nnpgen monitor --help
 - `train`: prepare fine-tuning inputs and benchmark predictions.
 - `monitor`: summarize workflow state or run the optional watchdog.
 
+## End-to-end dataset workflow
+
+The public workflow is organized by intent rather than numbered stages:
+
+```text
+MD or POSCAR sampling
+  -> DFT task preparation and execution
+  -> PBS/Slurm scheduler monitoring
+  -> convergence-qualified VASP archive
+  -> validated Deep Potential dataset
+  -> split, distillation prediction, and training helpers
+```
+
+Commands remain dry-run or read-only where the underlying operation supports
+it. Scheduler hosts, run roots, templates, models, and output paths are always
+provided by configuration or command-line arguments.
+
 ## Portable configuration
 
 Public defaults use the current working directory. Supply real paths, model
@@ -77,8 +94,14 @@ between clusters without code edits:
 nnpgen dft archive \
   --manifest plans/dft_manifest.json \
   --remote primary=login.example:/work/project/dft \
-  --output-root datasets/archive \
+  --remote secondary=other.example:/work/project/dft \
+  --output-root datasets/dft-archive \
   --dry-run
+
+nnpgen monitor schedulers \
+  --target primary=pbs@login.example:/work/project/dft \
+  --target secondary=slurm@other.example:/work/project/dft \
+  --output reports/schedulers.json
 
 nnpgen dft recover \
   --manifest plans/dft_manifest.json \
@@ -87,13 +110,50 @@ nnpgen dft recover \
 # Add --apply only after reviewing the recovery report.
 ```
 
-`archive` requires finished markers and `OUTCAR` by default, records pending
-and failed frames, and stages successful frames without deleting source data.
-Add `--convert` to invoke the package's VASP-to-DP-data converter after a
-successful staging pass.
+`monitor schedulers` reports physical jobs, unique `system/frame` task keys,
+duplicates, running jobs, and queued jobs per backend. An unreachable scheduler
+is reported as `unavailable` or `partial`, never as zero.
+
+`archive` accepts a frame only when `tag_finished` and `OUTCAR` exist,
+`tag_failed` is absent, and `OUTCAR` contains both the EDIFF convergence marker
+and the normal VASP timing footer. It rejects converged task-key duplicates
+across targets and stages each scan in a fresh audit directory.
+
+After reviewing the dry-run report, rebuild and install a DP dataset with QA
+and a timestamped rollback backup:
+
+```bash
+nnpgen dft archive \
+  --manifest plans/dft_manifest.json \
+  --remote primary=login.example:/work/project/dft \
+  --remote secondary=other.example:/work/project/dft \
+  --output-root datasets/dft-archive \
+  --convert \
+  --dataset-root datasets/dft-dpdata
+
+nnpgen dataset validate-dpdata --dataset-root datasets/dft-dpdata
+```
+
+The validator checks converter summaries, composition identities, RAW and NPY
+frame counts, `set.000`, `type.raw`, and `type_map.raw` before installation.
 `recover` preserves active jobs and explicit failures; it only changes a
 manifest when `--apply` is supplied. Use `--allow-lost-target NAME` only after
 confirming that a target's scheduler is genuinely unavailable.
+
+For model-based distillation, the model checkpoint's type map is used for
+inference while `--type-map` controls the written DP dataset:
+
+```bash
+nnpgen train predict-poscar \
+  --input-root sampled-poscars \
+  --model models/compressed.pb \
+  --output-dir datasets/distilled \
+  --type-map H,O,N,Si \
+  --dft-manifest-glob 'plans/dft_*_manifest.json'
+```
+
+Remote fallback scans are opt-in through `--fallback-remote-scan`; prediction
+does not open SSH connections merely because no manifest matched.
 
 For campaign-level status:
 
