@@ -35,3 +35,8 @@ def test_new_generic_commands_are_listed():
     assert "schedulers" in result.stdout
     result = run_cli("dataset", "--help")
     assert "validate-dpdata" in result.stdout
+    assert "inspect" in result.stdout
+    assert "build-manifest" in result.stdout
+    assert "convert-npy-to-lmdb" in result.stdout
+    assert "validate-lmdb" in result.stdout
+    assert "compare-npy-lmdb" in result.stdout

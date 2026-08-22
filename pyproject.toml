@@ -32,6 +32,7 @@ dependencies = [
 md = ["ase", "mace-torch"]
 deepmd = ["deepmd-kit"]
 dataset = ["numpy"]
+lmdb = ["numpy", "lmdb", "msgpack"]
 geo = ["ase", "numpy"]
 plot = ["matplotlib", "numpy"]
 dev = ["pytest", "numpy", "ase"]

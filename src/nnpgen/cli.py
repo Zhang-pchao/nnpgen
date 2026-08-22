@@ -161,6 +161,31 @@ COMMANDS: Dict[str, Dict[str, CommandSpec]] = {
         "split-train-test": CommandSpec("Split DP datasets into train/test roots.", module="nnpgen.dataset.split_train_test"),
         "check-run-systems": CommandSpec("Validate DeepMD run.json system paths.", module="nnpgen.dataset.check_run_systems"),
         "build-exclude-list": CommandSpec("Build explicit DFT exclusion keys.", module="nnpgen.dataset.build_exclude_list"),
+        "inspect": CommandSpec(
+            "Inspect DPData/NPY groups and optionally write a manifest.",
+            add_args="nnpgen.dataset.inspect:add_inspect_arguments",
+            runner="nnpgen.dataset.inspect:run_inspect",
+        ),
+        "build-manifest": CommandSpec(
+            "Build a deterministic DPData/NPY TSV manifest.",
+            add_args="nnpgen.dataset.inspect:add_manifest_arguments",
+            runner="nnpgen.dataset.inspect:run_build_manifest",
+        ),
+        "convert-npy-to-lmdb": CommandSpec(
+            "Convert a DPData/NPY manifest to DPA4C-compatible LMDB.",
+            add_args="nnpgen.dataset.lmdb:add_convert_arguments",
+            runner="nnpgen.dataset.lmdb:run_convert",
+        ),
+        "validate-lmdb": CommandSpec(
+            "Validate DPA4C-compatible LMDB metadata and frames.",
+            add_args="nnpgen.dataset.lmdb:add_validate_arguments",
+            runner="nnpgen.dataset.lmdb:run_validate",
+        ),
+        "compare-npy-lmdb": CommandSpec(
+            "Compare source NPY frames with LMDB frames.",
+            add_args="nnpgen.dataset.lmdb:add_compare_arguments",
+            runner="nnpgen.dataset.lmdb:run_compare",
+        ),
     },
     "geo": {
         "build-sio2-nanobubble": CommandSpec(

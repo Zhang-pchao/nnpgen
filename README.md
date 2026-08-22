@@ -26,6 +26,7 @@ Install only the optional capabilities you need:
 python -m pip install -e ".[dev]"       # tests and local development
 python -m pip install -e ".[md,geo]"     # ASE/MACE and geometry builders
 python -m pip install -e ".[dataset]"    # NumPy-backed dataset utilities
+python -m pip install -e ".[lmdb]"       # DPA4C-compatible LMDB conversion and QA
 python -m pip install -e ".[plot]"       # benchmark plots
 ```
 
@@ -46,7 +47,7 @@ nnpgen monitor --help
 
 - `md`: prepare, submit, monitor, and post-process MD frames.
 - `dft`: plan, prepare, submit, monitor, archive, recover, and convert DFT data.
-- `dataset`: validate and convert DP, EXTXYZ, and VASP-derived datasets.
+- `dataset`: inspect, split, validate, and convert DP, EXTXYZ, NPY, and LMDB datasets.
 - `geo`: build reusable structure/solvent geometries, including the SiO₂
   nanobubble builder.
 - `train`: prepare fine-tuning inputs and benchmark predictions.
@@ -151,6 +152,49 @@ nnpgen train predict-poscar \
   --type-map H,O,N,Si \
   --dft-manifest-glob 'plans/dft_*_manifest.json'
 ```
+
+## NPY/LMDB dataset workflow
+
+The LMDB commands target the DPA4C/DeepMD mixed-system schema and keep the
+source manifest, type map, system order, and frame provenance in metadata.
+LMDB support is optional; install it with `.[lmdb]`.
+
+```bash
+nnpgen dataset inspect \
+  --root datasets/train \
+  --root datasets/validation \
+  --output reports/dataset-inspection.json \
+  --manifest reports/dataset-systems.tsv
+
+nnpgen dataset build-manifest \
+  --root datasets/train \
+  --output manifests/training.tsv \
+  --block training \
+  --label dft
+
+nnpgen dataset convert-npy-to-lmdb \
+  --manifest manifests/training.tsv \
+  --output datasets/lmdb/training.lmdb \
+  --report reports/training-lmdb.json \
+  --type-map H,O,N,Na,Cl,Ti,C,Si
+
+nnpgen dataset validate-lmdb \
+  --input datasets/lmdb/training.lmdb \
+  --output reports/training-lmdb-validation.json \
+  --full
+
+nnpgen dataset compare-npy-lmdb \
+  --manifest manifests/training.tsv \
+  --lmdb datasets/lmdb/training.lmdb \
+  --output reports/training-lmdb-compare.json
+```
+
+The converter refuses existing output directories, writes through a staging
+directory, and performs a source-manifest/hash and frame-count audit. It does
+not embed cluster paths, scheduler defaults, model checkpoints, or sampling
+probabilities in the package. Use a project-local manifest or configuration for
+those values. `mix:N` remains a training-time atom budget; it is not a frame
+count and is intentionally outside the conversion command.
 
 Remote fallback scans are opt-in through `--fallback-remote-scan`; prediction
 does not open SSH connections merely because no manifest matched.
