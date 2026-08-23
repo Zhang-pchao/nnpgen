@@ -27,6 +27,7 @@ python -m pip install -e ".[dev]"       # tests and local development
 python -m pip install -e ".[md,geo]"     # ASE/MACE and geometry builders
 python -m pip install -e ".[dataset]"    # NumPy-backed dataset utilities
 python -m pip install -e ".[lmdb]"       # DPA4C-compatible LMDB conversion and QA
+python -m pip install -e ".[deepmd]"     # DeePMD evaluation in a compatible runtime
 python -m pip install -e ".[plot]"       # benchmark plots
 ```
 
@@ -195,6 +196,59 @@ not embed cluster paths, scheduler defaults, model checkpoints, or sampling
 probabilities in the package. Use a project-local manifest or configuration for
 those values. `mix:N` remains a training-time atom budget; it is not a frame
 count and is intentionally outside the conversion command.
+
+## DeepMD evaluation
+
+Use `dp-test` when DeePMD's native test implementation already provides the
+needed aggregate metrics. The wrapper does not reimplement inference or error
+definitions: it runs `dp test`, keeps the complete log, parses the final
+weighted-average block, measures wall time and frames per second, and records
+the model/data hashes and selected runtime settings.
+
+```bash
+nnpgen train dp-test \
+  --pt-expt \
+  --model models/model.pt2 \
+  --system datasets/lmdb/validation.lmdb \
+  --numb-test 0 \
+  --chunk-atoms 20000 \
+  --audit-input manifests/validation.tsv \
+  --output-dir reports/native-test/model-a
+```
+
+`--numb-test 0` requests every frame. Omit `--pt-expt` for DeePMD backends that
+use the regular `dp test` entry point. `--chunk-atoms` only sets
+`DP_TEST_CHUNK_ATOMS`; unsupported backends may ignore it. Existing log or
+summary files are never overwritten.
+
+Use `benchmark-predict` only when per-system or per-family metrics are needed.
+It reads DPData/NPY systems directly, obtains the type map from the model by
+default, batches by an atom budget, and aggregates SSE/count values without
+retaining predictions in memory. Manifest `block` or `label` values provide
+portable family names.
+
+```bash
+nnpgen train benchmark-predict \
+  --manifest manifests/validation.tsv \
+  --model models/model.pt2 \
+  --model-label model-a \
+  --chunk-atoms 20000 \
+  --group-by block \
+  --output-root reports/detailed-test/model-a
+```
+
+The detailed report contains `summary.json`, `per_system.csv`, and
+`per_family.csv`. Data or model errors fail closed unless
+`--continue-on-error` is explicitly requested. Add `--save-arrays` only when
+parity plots are required:
+
+```bash
+nnpgen train benchmark-plot \
+  --arrays reports/detailed-test/model-a/benchmark_arrays.npz \
+  --model-label model-a \
+  --reference-label DFT \
+  --output-dir reports/detailed-test/model-a/plots
+```
 
 Remote fallback scans are opt-in through `--fallback-remote-scan`; prediction
 does not open SSH connections merely because no manifest matched.

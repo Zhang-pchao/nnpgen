@@ -75,12 +75,20 @@ def _parity_hexbin(ax, x: np.ndarray, y: np.ndarray, title: str, xlabel: str, yl
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--arrays", required=True, help="Path to benchmark_arrays.npz")
     parser.add_argument("--output-dir", required=True, help="Output directory for plots")
+    parser.add_argument("--model-label", default="Model", help="Model name used in titles and prediction-axis labels")
+    parser.add_argument("--reference-label", default="Reference", help="Reference-data name used on the x axes")
+    parser.add_argument("--output-prefix", default="parity_density", help="Filename prefix for PNG, PDF, and summary outputs")
 
 
 def run(args: argparse.Namespace) -> Dict[str, object]:
     arrays_path = Path(args.arrays)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    model_label = str(args.model_label).strip() or "Model"
+    reference_label = str(args.reference_label).strip() or "Reference"
+    output_prefix = str(args.output_prefix).strip()
+    if not output_prefix or Path(output_prefix).name != output_prefix:
+        raise ValueError("output-prefix must be a filename without directory separators")
 
     if not arrays_path.is_file():
         raise ValueError("arrays file not found: {0}".format(arrays_path))
@@ -118,8 +126,8 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
         e_true_pa,
         e_pred_pa,
         "Energy Parity",
-        "DFT Energy (eV/atom)",
-        "DPA3 Energy (eV/atom)",
+        f"{reference_label} Energy (eV/atom)",
+        f"{model_label} Energy (eV/atom)",
     )
     k += 1
 
@@ -128,8 +136,8 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
         force_true,
         force_pred,
         "Force Parity",
-        "DFT Force (eV/Ang)",
-        "DPA3 Force (eV/Ang)",
+        f"{reference_label} Force (eV/Ang)",
+        f"{model_label} Force (eV/Ang)",
     )
     k += 1
 
@@ -139,15 +147,15 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
             virial_true,
             virial_pred,
             "Virial Parity",
-            "DFT Virial",
-            "DPA3 Virial",
+            f"{reference_label} Virial",
+            f"{model_label} Virial",
         )
 
-    fig.suptitle("DPA3 vs DFT Parity (Energy/Force/Virial)", fontsize=14)
+    fig.suptitle(f"{model_label} vs {reference_label} Parity", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
-    png_path = output_dir / "dpa3_vs_dft_parity_density.png"
-    pdf_path = output_dir / "dpa3_vs_dft_parity_density.pdf"
+    png_path = output_dir / f"{output_prefix}.png"
+    pdf_path = output_dir / f"{output_prefix}.pdf"
     fig.savefig(str(png_path), bbox_inches="tight")
     fig.savefig(str(pdf_path), bbox_inches="tight")
     plt.close(fig)
@@ -166,14 +174,14 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
         },
     }
 
-    summary_path = output_dir / "parity_plot_summary.json"
+    summary_path = output_dir / f"{output_prefix}.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(json.dumps(summary, indent=2, sort_keys=True))
     return summary
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot DPA3 vs DFT parity density from benchmark arrays")
+    parser = argparse.ArgumentParser(description="Plot model-versus-reference parity density from benchmark arrays")
     add_arguments(parser)
     args = parser.parse_args()
     run(args)

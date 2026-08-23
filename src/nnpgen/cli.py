@@ -196,8 +196,21 @@ COMMANDS: Dict[str, Dict[str, CommandSpec]] = {
     "train": {
         "fill-finetune-systems": CommandSpec("Fill DeepMD fine-tuning systems arrays.", module="nnpgen.train.finetune"),
         "predict-poscar": CommandSpec("Predict POSCAR structures with DeepMD and export DP data.", module="nnpgen.train.predict_poscar"),
-        "benchmark-predict": CommandSpec("Run DeepMD predictions over DP test data.", module="nnpgen.train.benchmark_predict"),
-        "benchmark-plot": CommandSpec("Plot parity metrics from benchmark arrays.", module="nnpgen.train.benchmark_plot"),
+        "dp-test": CommandSpec(
+            "Run and audit DeePMD-kit's native dp test command.",
+            add_args="nnpgen.train.deepmd_test:add_arguments",
+            runner="nnpgen.train.deepmd_test:run",
+        ),
+        "benchmark-predict": CommandSpec(
+            "Run DeepMD predictions over DP test data.",
+            add_args="nnpgen.train.benchmark_predict:add_arguments",
+            runner="nnpgen.train.benchmark_predict:run",
+        ),
+        "benchmark-plot": CommandSpec(
+            "Plot parity metrics from benchmark arrays.",
+            add_args="nnpgen.train.benchmark_plot:add_arguments",
+            runner="nnpgen.train.benchmark_plot:run",
+        ),
         "sync-dataset": CommandSpec("Sync train/test datasets and optional training inputs.", module="nnpgen.train.sync"),
     },
     "monitor": {

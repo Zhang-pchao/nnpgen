@@ -40,3 +40,17 @@ def test_new_generic_commands_are_listed():
     assert "convert-npy-to-lmdb" in result.stdout
     assert "validate-lmdb" in result.stdout
     assert "compare-npy-lmdb" in result.stdout
+    result = run_cli("train", "--help")
+    assert "dp-test" in result.stdout
+    assert "benchmark-predict" in result.stdout
+
+
+def test_deepmd_benchmark_help_is_available_without_loading_a_model():
+    result = run_cli("train", "dp-test", "--help")
+    assert "usage: nnpgen train dp-test" in result.stdout
+    assert "--pt-expt" in result.stdout
+    assert "--numb-test" in result.stdout
+    result = run_cli("train", "benchmark-predict", "--help")
+    assert "usage: nnpgen train benchmark-predict" in result.stdout
+    assert "--chunk-atoms" in result.stdout
+    assert "--manifest" in result.stdout
